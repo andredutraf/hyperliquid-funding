@@ -273,7 +273,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 req_data = json.loads(body)
                 coin = req_data.get('coin', req_data.get('dex', req_data.get('type', 'unknown')))
-            except:
+            except (json.JSONDecodeError, ValueError):
                 coin = 'unknown'
 
             # Retry logic for transient errors

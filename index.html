@@ -178,10 +178,20 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useCallback } = React;
+        const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         // API Configuration - proxy via servidor local (sem CORS)
         const API_BASE = '/api/proxy';
+
+        // Lista de tokens protegidos - NÃO vão para blacklist (erro 502 é temporário)
+        const PROTECTED_TOKENS = new Set([
+            'HYPE', 'SOL', 'ZRO', 'ETH', 'kPEPE', 'APT', 'WIF', 'AVAX', 'ADA', 'TON',
+            'PENDLE', 'OP', 'IP', 'kBONK', 'ETHFI', 'XLM', 'ARB', 'SPX', 'kSHIB',
+            'POL', 'INJ', 'POPCAT', 'ATOM', 'SEI', 'PENGU', 'FIL', 'MNT', 'ZK',
+            'BTC', 'XRP', 'DOGE', 'LINK', 'UNI', 'LTC', 'BCH', 'DOT', 'MATIC',
+            'NEAR', 'TRX', 'ICP', 'AAVE', 'ETC', 'STX', 'IMX',
+            'TAO', 'SUI', 'ONDO', 'JUP', 'PYTH', 'TIA', 'WLD', 'BLUR', 'MEME'
+        ]);
 
         // ============================================
         // SQLite Backend via Server API
@@ -274,9 +284,9 @@
             // HIP-3 são os que têm ":" no nome (dex:COIN format)
             if (coin.includes(':')) {
                 // Extrai o símbolo após o ":"
-                const symbol = coin.split(':')[1];
-                // Verifica se é TradFi
-                if (TRADFI_SYMBOLS.some(t => symbol.toUpperCase().includes(t.toUpperCase()))) {
+                const symbol = coin.split(':')[1].toUpperCase();
+                // Verifica se é TradFi (match exato para evitar falsos positivos)
+                if (TRADFI_SYMBOLS.some(t => t.toUpperCase() === symbol)) {
                     return 'TradFi';
                 }
                 return 'HIP-3';
@@ -332,7 +342,7 @@
         );
 
         // Sparkline Component - Mini gráfico de tendência
-        const Sparkline = ({ data, width = 60, height = 20, positive }) => {
+        const Sparkline = ({ data, width = 60, height = 20 }) => {
             if (!data || data.length < 2) return <span className="text-hl-muted text-xs">—</span>;
 
             const values = data.slice(0, 24).map(d => parseFloat(d.fundingRate)).reverse();
@@ -380,13 +390,65 @@
             </span>
         );
 
+        // Table Header Component (fora do App para evitar re-renders)
+        const TableHeader = ({ label, sortKey, sortConfig, onSort, className = '' }) => (
+            <div
+                className={`flex items-center cursor-pointer hover:text-hl-accent transition-colors ${className}`}
+                onClick={() => onSort(sortKey)}
+            >
+                {label}
+                {sortConfig.key === sortKey && <SortIcon direction={sortConfig.direction} />}
+            </div>
+        );
+
+        // Calculate funding metrics from history (fora do App - função pura)
+        const calculateMetrics = (history) => {
+            if (!history || history.length === 0) {
+                return { avg24h: null, avg7d: null, avg30d: null, avgAllTime: null, periods: 0, firstFunding: null };
+            }
+
+            const now = Date.now();
+            const h24 = now - 24 * 60 * 60 * 1000;
+            const d7 = now - 7 * 24 * 60 * 60 * 1000;
+            const d30 = now - 30 * 24 * 60 * 60 * 1000;
+
+            const rates24h = [];
+            const rates7d = [];
+            const rates30d = [];
+            const ratesAll = [];
+
+            history.forEach(entry => {
+                const time = entry.time;
+                const rate = parseFloat(entry.fundingRate);
+
+                ratesAll.push(rate);
+                if (time >= h24) rates24h.push(rate);
+                if (time >= d7) rates7d.push(rate);
+                if (time >= d30) rates30d.push(rate);
+            });
+
+            const avg = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+            const firstEntry = history[history.length - 1];
+            const firstFunding = firstEntry ? new Date(firstEntry.time) : null;
+
+            return {
+                avg24h: avg(rates24h),
+                avg7d: avg(rates7d),
+                avg30d: avg(rates30d),
+                avgAllTime: avg(ratesAll),
+                periods: history.length,
+                firstFunding
+            };
+        };
+
         // Funding Chart Component - SVG Nativo
         const FundingChart = ({ history, formatPercent, getColorClass }) => {
             const [chartPeriod, setChartPeriod] = useState('7d');
             const [showMA7, setShowMA7] = useState(true);
             const [showMA30, setShowMA30] = useState(false);
             const [tooltip, setTooltip] = useState(null);
-            const chartRef = React.useRef(null);
+            const chartRef = useRef(null);
 
             // Dimensões do gráfico
             const width = 800;
@@ -849,29 +911,8 @@
                             localStorage.removeItem('hl-blacklisted');
                             console.log('Migrated blacklist to server');
                         }
-                        // Lista de tokens protegidos - NÃO são removidos da blacklist ao carregar
-                        // (tokens importantes que podem dar erro 502 temporário)
-                        const PROTECTED_TOKENS = new Set([
-                            'HYPE', 'SOL', 'ZRO', 'ETH', 'kPEPE', 'APT', 'WIF', 'AVAX', 'ADA', 'TON',
-                            'PENDLE', 'OP', 'IP', 'kBONK', 'ETHFI', 'XLM', 'ARB', 'SPX', 'kSHIB',
-                            'POL', 'INJ', 'POPCAT', 'ATOM', 'SEI', 'PENGU', 'FIL', 'MNT', 'ZK',
-                            'BTC', 'XRP', 'DOGE', 'LINK', 'UNI', 'LTC', 'BCH', 'DOT', 'MATIC',
-                            'NEAR', 'TRX', 'ICP', 'AAVE', 'ETC', 'STX', 'IMX',
-                            'TAO', 'SUI', 'ONDO', 'JUP', 'PYTH', 'TIA', 'WLD', 'BLUR', 'MEME'
-                        ]);
-
-                        // Não filtra mais a blacklist - mantém todos os tokens
-                        const filteredBlacklist = serverBlacklist;
-                        if (filteredBlacklist.length !== serverBlacklist.length) {
-                            console.log(`Cleaned blacklist: removed ${serverBlacklist.length - filteredBlacklist.length} protected tokens`);
-                            // Salva a lista limpa
-                            await fetch('/api/preferences/blacklist', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(filteredBlacklist)
-                            });
-                        }
-                        setBlacklistedCoins(filteredBlacklist);
+                        // Carrega blacklist do servidor (PROTECTED_TOKENS definido globalmente)
+                        setBlacklistedCoins(serverBlacklist);
 
                         // Load new tokens list
                         const ntRes = await fetch('/api/preferences/newtokens');
@@ -1054,8 +1095,6 @@
                         body: JSON.stringify({ type: 'metaAndAssetCtxs' })
                     });
 
-                    if (!response.ok) throw new Error('Failed to fetch market data');
-                    
                     const data = await response.json();
                     const [meta, assetCtxs] = data;
 
@@ -1237,7 +1276,6 @@
                             })
                         });
 
-                        if (!response.ok) throw new Error(`Failed to fetch funding history for ${coin}`);
                         const data = await response.json();
                         
                         if (data.length === 0) {
@@ -1413,17 +1451,7 @@
                                 };
                                 setFetchErrors(prev => [errorInfo, ...prev].slice(0, 50));
 
-                                // Lista de tokens protegidos - nunca vão para blacklist (erro 502 é temporário)
-                                const PROTECTED_TOKENS = new Set([
-                                    'HYPE', 'SOL', 'ZRO', 'ETH', 'kPEPE', 'APT', 'WIF', 'AVAX', 'ADA', 'TON',
-                                    'PENDLE', 'OP', 'IP', 'kBONK', 'ETHFI', 'XLM', 'ARB', 'SPX', 'kSHIB',
-                                    'POL', 'INJ', 'POPCAT', 'ATOM', 'SEI', 'PENGU', 'FIL', 'MNT', 'ZK',
-                                    'BTC', 'XRP', 'DOGE', 'LINK', 'UNI', 'LTC', 'BCH', 'DOT', 'MATIC',
-                                    'NEAR', 'TRX', 'ICP', 'AAVE', 'ETC', 'STX', 'IMX',
-                                    'TAO', 'SUI', 'ONDO', 'JUP', 'PYTH', 'TIA', 'WLD', 'BLUR', 'MEME'
-                                ]);
-
-                                // Se erro 502 e token NÃO é protegido, adiciona à blacklist
+                                // Se erro 502 e token NÃO é protegido (usa PROTECTED_TOKENS global), adiciona à blacklist
                                 if (errorMsg.includes('502') && !PROTECTED_TOKENS.has(market.coin)) {
                                     setBlacklistedCoins(prev => [...new Set([...prev, market.coin])]);
                                     setMarketData(prev => prev.filter(m => m.coin !== market.coin));
@@ -1461,57 +1489,16 @@
 
                 const totalRecords = Object.values(updatedHistories).reduce((sum, h) => sum + h.length, 0);
                 console.log(`Database updated: ${Object.keys(updatedHistories).length} coins, ${totalRecords.toLocaleString()} total records`);
-            }, [marketData, fetchFundingHistory]);
+            }, [marketData, fetchFundingHistory, blacklistedCoins, newTokens, favorites]);
 
-            // Calculate funding metrics from history
-            const calculateMetrics = useCallback((history) => {
-                if (!history || history.length === 0) {
-                    return { avg24h: null, avg7d: null, avg30d: null, avgAllTime: null, periods: 0, firstFunding: null };
-                }
-
-                const now = Date.now();
-                const h24 = now - 24 * 60 * 60 * 1000;
-                const d7 = now - 7 * 24 * 60 * 60 * 1000;
-                const d30 = now - 30 * 24 * 60 * 60 * 1000;
-
-                const rates24h = [];
-                const rates7d = [];
-                const rates30d = [];
-                const ratesAll = [];
-
-                history.forEach(entry => {
-                    const time = entry.time;
-                    const rate = parseFloat(entry.fundingRate);
-                    
-                    ratesAll.push(rate);
-                    if (time >= h24) rates24h.push(rate);
-                    if (time >= d7) rates7d.push(rate);
-                    if (time >= d30) rates30d.push(rate);
-                });
-
-                const avg = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
-
-                const firstEntry = history[history.length - 1];
-                const firstFunding = firstEntry ? new Date(firstEntry.time) : null;
-
-                return {
-                    avg24h: avg(rates24h),
-                    avg7d: avg(rates7d),
-                    avg30d: avg(rates30d),
-                    avgAllTime: avg(ratesAll),
-                    periods: history.length,
-                    firstFunding
-                };
-            }, []);
-
-            // Enhanced market data with metrics
+            // Enhanced market data with metrics (usa calculateMetrics global)
             const enhancedMarketData = useMemo(() => {
                 return marketData.map(market => {
                     const history = fundingHistory[market.coin] || [];
                     const metrics = calculateMetrics(history);
                     return { ...market, ...metrics };
                 });
-            }, [marketData, fundingHistory, calculateMetrics]);
+            }, [marketData, fundingHistory]);
 
             // Sorted and filtered data
             const sortedData = useMemo(() => {
@@ -1565,7 +1552,7 @@
                     }
                     return aVal < bVal ? 1 : -1;
                 });
-            }, [enhancedMarketData, sortConfig, searchTerm, categoryFilter, filters, showOnlyFavorites, favorites]);
+            }, [enhancedMarketData, sortConfig, searchTerm, categoryFilter, filters, showOnlyFavorites, favorites, blacklistedCoins, newTokens]);
 
             // Category counts for tabs
             const categoryCounts = useMemo(() => {
@@ -1650,19 +1637,6 @@
 
                 return () => clearInterval(interval);
             }, [marketData, fetchAllFundingHistories]);
-
-            // Table header component
-            const TableHeader = ({ label, sortKey, className = '' }) => (
-                <th 
-                    className={`px-3 py-3 text-left text-xs font-semibold text-hl-muted uppercase tracking-wider cursor-pointer hover:text-hl-accent transition-colors ${className}`}
-                    onClick={() => handleSort(sortKey)}
-                >
-                    <div className="flex items-center">
-                        {label}
-                        {sortConfig.key === sortKey && <SortIcon direction={sortConfig.direction} />}
-                    </div>
-                </th>
-            );
 
             if (loading) {
                 return (
@@ -1915,17 +1889,17 @@
                                 <thead>
                                     <tr>
                                         <th className="sticky left-0 z-20" style={{background: 'var(--bg-secondary)'}}>
-                                            <TableHeader label="Par" sortKey="coin" />
+                                            <TableHeader label="Par" sortKey="coin" sortConfig={sortConfig} onSort={handleSort} />
                                         </th>
-                                        <th><TableHeader label="Funding" sortKey="funding" /></th>
-                                        <th><TableHeader label="APY Atual" sortKey="funding" /></th>
-                                        <th><TableHeader label="APY 24h" sortKey="avg24h" /></th>
-                                        <th><TableHeader label="APY 7d" sortKey="avg7d" /></th>
-                                        <th><TableHeader label="APY 30d" sortKey="avg30d" /></th>
-                                        <th><TableHeader label="APY All-Time" sortKey="avgAllTime" /></th>
-                                        <th><TableHeader label="OI" sortKey="openInterest" /></th>
-                                        <th><TableHeader label="Vol 24h" sortKey="volume24h" /></th>
-                                        <th><TableHeader label="Dias" sortKey="periods" /></th>
+                                        <th><TableHeader label="Funding" sortKey="funding" sortConfig={sortConfig} onSort={handleSort} /></th>
+                                        <th><TableHeader label="APY Atual" sortKey="funding" sortConfig={sortConfig} onSort={handleSort} /></th>
+                                        <th><TableHeader label="APY 24h" sortKey="avg24h" sortConfig={sortConfig} onSort={handleSort} /></th>
+                                        <th><TableHeader label="APY 7d" sortKey="avg7d" sortConfig={sortConfig} onSort={handleSort} /></th>
+                                        <th><TableHeader label="APY 30d" sortKey="avg30d" sortConfig={sortConfig} onSort={handleSort} /></th>
+                                        <th><TableHeader label="APY All-Time" sortKey="avgAllTime" sortConfig={sortConfig} onSort={handleSort} /></th>
+                                        <th><TableHeader label="OI" sortKey="openInterest" sortConfig={sortConfig} onSort={handleSort} /></th>
+                                        <th><TableHeader label="Vol 24h" sortKey="volume24h" sortConfig={sortConfig} onSort={handleSort} /></th>
+                                        <th><TableHeader label="Dias" sortKey="periods" sortConfig={sortConfig} onSort={handleSort} /></th>
                                     </tr>
                                 </thead>
                                 <tbody>
